@@ -1,0 +1,12 @@
+{
+  "name": "milletmitra-whatsapp-ai",
+  "version": "1.0.0",
+  "description": "MilletMitra AI WhatsApp Farmer Advisory Prototype",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
