@@ -17,43 +17,62 @@ app.get("/webhook", (req, res) => {
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (mode === "subscribe" &&
-      token === process.env.VERIFY_TOKEN) {
+  if (
+    mode === "subscribe" &&
+    token === process.env.VERIFY_TOKEN
+  ) {
     return res.status(200).send(challenge);
   }
 
   return res.sendStatus(403);
 });
 
-// Ask OpenAI for agricultural advice
+// Gemini AI: agricultural advice in simple Hindi/Bundeli
 async function getAIReply(question) {
   const prompt = `
 आप MilletMitra AI हैं, बुंदेलखंड के किसानों के कृषि सलाह सहायक।
 
-किसान के प्रश्न का सरल हिंदी में उत्तर दें। जरूरत पर
-सरल बुंदेली शब्दों का उपयोग करें।
-पहले जरूरी जानकारी पूछें: जिला/गाँव, फसल, फसल की उम्र,
-लक्षण कब से हैं, सिंचाई और हाल में डाली गई खाद/दवा।
+किसान को सरल हिंदी में उत्तर दें और जरूरत पर आसान बुंदेली शब्दों का उपयोग करें।
+
+जरूरत के अनुसार पूछें:
+- जिला और गाँव
+- फसल और फसल की उम्र
+- लक्षण कब से हैं
+- सिंचाई की स्थिति
+- हाल में डाली गई खाद या दवा
+
 अपर्याप्त जानकारी पर बीमारी या दवा निश्चित न बताएं।
-व्यावहारिक और सुरक्षित अगले कदम बताएं। दवा की मात्रा
-बिना पर्याप्त जानकारी के न गढ़ें। उत्तर संक्षिप्त रखें।
+सुरक्षित और व्यावहारिक अगले कदम बताएं।
+बिना पर्याप्त जानकारी के दवा की मात्रा न गढ़ें।
+उत्तर संक्षिप्त और किसान के लिए उपयोगी रखें।
 
 किसान का संदेश:
 ${question}
 `;
 
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is missing in Render Environment");
+  }
+
   const response = await fetch(
-    "https://api.openai.com/v1/responses",
+    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
     {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        input: prompt,
-        max_output_tokens: 500
+        model: "gemini-3.8-flash",
+        messages: [
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        max_tokens: 500
       })
     }
   );
@@ -61,18 +80,15 @@ ${question}
   const data = await response.json();
 
   if (!response.ok) {
-    console.error("OpenAI API error:", response.status, data);
-    throw new Error("AI response failed");
+    console.error("Gemini API error:", response.status, data);
+    throw new Error("Gemini response failed");
   }
 
-  const answer = (data.output || [])
-    .flatMap(item => item.content || [])
-    .filter(item => item.type === "output_text")
-    .map(item => item.text)
-    .join("\n")
-    .trim();
+  const answer =
+    data.choices?.[0]?.message?.content?.trim();
 
-  return answer || "कृपया अपनी फसल और समस्या की जानकारी दोबारा भेजें।";
+  return answer ||
+    "कृपया अपनी फसल और समस्या की जानकारी दोबारा भेजें।";
 }
 
 // Send WhatsApp text reply
@@ -96,6 +112,7 @@ async function sendWhatsAppReply(to, body) {
   );
 
   const result = await response.json();
+
   console.log("WhatsApp send result:", response.status, result);
 
   if (!response.ok) {
@@ -110,10 +127,12 @@ app.post("/webhook", (req, res) => {
 
   (async () => {
     try {
-      const value = req.body?.entry?.[0]?.changes?.[0]?.value;
+      const value =
+        req.body?.entry?.[0]?.changes?.[0]?.value;
+
       const message = value?.messages?.[0];
 
-      // Ignore delivery receipts and other non-message events
+      // Ignore delivery receipts and non-text messages
       if (!message?.from || message.type !== "text") return;
 
       const question = message.text?.body?.trim();
@@ -122,6 +141,7 @@ app.post("/webhook", (req, res) => {
       console.log("Incoming message:", question);
 
       const answer = await getAIReply(question);
+
       await sendWhatsAppReply(message.from, answer);
 
     } catch (error) {
